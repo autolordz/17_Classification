@@ -1,0 +1,462 @@
+---
+title: "17 Classifications of Car Data" 
+author: "Autoz"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+editor_options:
+  chunk_output_type: console
+output:
+  html_document:
+    toc: yes
+---
+
+> originated by Car Evaluation Analysis - Suraj Vidyadaran
+
+# Car Evaluation Analysis
+
+17种分类 Car Data
+
+## 1 Processing Data
+
+```{r}
+# 设置缓存
+knitr::opts_chunk$set(cache = TRUE, autodep = TRUE)
+# 批量必要环境,data.table高速读取几十万行数据
+pacman::p_load(tidyverse,data.table,ggplot2,ggpubr,caret,gmodels,vcd)
+```
+
+> Car Data
+
+```{r}
+CAR <- read.csv("car.data.txt")
+colnames(CAR)<-c("buying","maint","doors","persons","lug_boot","safety","class")
+CAR$class = factor(CAR$class)
+inTrain <- createDataPartition(y = CAR$class, p = 0.75, 
+                               list = FALSE) # 75% training
+CAR.train <- CAR[inTrain,]
+CAR.test <- CAR[-inTrain,]
+# formula
+f_all <- as.formula(class ~ .)
+f_6 <- as.formula(class~buying+maint+doors+persons+lug_boot+safety)
+f_doors <- as.formula(class~doors)
+
+rm(KA)
+```
+
+
+> Credit Data
+
+```{r}
+CRE <- read.csv("credit.csv")
+CRE$default = factor(CRE$default)
+
+inTrain <- createDataPartition(y = CRE$default, p = 0.75, 
+                               list = FALSE) # 75% training
+CRE.train <- CRE[inTrain,]
+CRE.test <- CRE[-inTrain,]
+```
+
+## 2 Classification Analysis 分类
+### A Linear Classification 线性分类
+#### 1 Logistic Regression 逻辑回归
+
+```{r,warning=FALSE,message=FALSE}
+library(VGAM)
+
+# Build the model
+LR_fit <- vglm(f_all,family = multinomial,data = CAR.train)
+
+#Predict using the model
+
+probability <- predict(LR_fit,CAR.test,type="response") #概率
+# probability <- predict(LR_fit,CAR.test[-7],type="response") #概率
+# probability <- predictvglm(LR_fit,CAR.test,type="response")
+
+pred_lr <-colnames(probability)[apply(probability,1,which.max)]
+
+#Accuracy of the model
+
+mtab <- data_frame(actual=CAR.test$class,
+                   predict=factor(pred_lr))
+
+confusionMatrix(mtab$actual, mtab$predict)$table
+
+KA <- data_frame(Fit = "LR_fit",Kappa = MAd::Kappa(mtab$actual, mtab$predict))
+
+# CrossTable(mtab$actual, mtab$predict,
+#            dnn = c('actual', 'predicted'))
+#            prop.chisq = F, prop.c = F, prop.r = F,
+```
+
+#### 2 Linear Discriminant Analysis 线性划分
+
+```{r,warning=FALSE,message=FALSE}
+library(MASS)
+
+#Build the model
+LDA_fit <- lda(f_all,data=CAR.train)
+
+#Predict using the model
+pred_lda<-predict(LDA_fit,CAR.test)$class
+
+#Accuracy of the model
+mtab <- data_frame(actual=CAR.test$class,
+                   predict=factor(pred_lda))
+
+confusionMatrix(mtab$actual, mtab$predict)$table
+
+# MAd::Kappa(mtab$actual, mtab$predict)
+
+KA <- KA %>% bind_rows(data_frame(Fit = "LDA_fit",Kappa = MAd::Kappa(mtab$actual, mtab$predict)))
+```
+
+### B Non-Linear Classification 非线性分类
+
+#### 1 Mixture Discriminant Analysis 混合划分
+
+```{r,warning=FALSE,message=FALSE}
+library(mda)
+
+#Build the model
+MDA_fit<-mda(f_all,data=CAR.train)
+
+#Predict using the model
+pred_mda<-predict(MDA_fit,CAR.test)
+
+#Accuracy of the model
+mtab <- data_frame(actual=CAR.test$class,
+                   predict=factor(pred_mda))
+
+confusionMatrix(mtab$actual, mtab$predict)$table
+
+# MAd::Kappa(mtab$actual, mtab$predict)
+
+KA <- KA %>% bind_rows(data_frame(Fit = "MDA_fit",Kappa = MAd::Kappa(mtab$actual, mtab$predict)))
+
+```
+
+#### 2 Quadratic Discriminant Analysis 二次划分
+
+> FALED with 矩阵不满秩 rank deficiency
+
+```{r,warning=FALSE,message=FALSE}
+library(MASS)
+
+#Build the model
+QDA_fit<-qda(f_doors,data=CAR.train)
+
+#Predict using the model
+pred_qda<-predict(QDA_fit,CAR.test)$class
+
+#Accuracy of the model
+mtab <- data_frame(actual=CAR.test$class,
+                   predict=pred_qda)
+
+confusionMatrix(mtab$actual, mtab$predict)$table
+
+# MAd::Kappa(mtab$actual, mtab$predict)
+
+KA <- KA %>% bind_rows(data_frame(Fit = "QDA_fit",Kappa = MAd::Kappa(mtab$actual, mtab$predict)))
+````
+
+#### 3 Regularized Discriminant Analysis 正则划分
+
+````{r,warning=FALSE,message=FALSE}
+library(klaR)
+
+#Build the model
+RDA_fit<-rda(f_all,data=CAR.train,gamma = 0.05,lambda = 0.01)
+
+#Predict using the model
+pred_rda<-predict(RDA_fit,CAR.test)$class
+
+#Accuracy of the model
+mtab <- data_frame(actual=CAR.test$class,
+                   predict=pred_rda)
+
+confusionMatrix(mtab$actual, mtab$predict)$table
+
+# MAd::Kappa(mtab$actual, mtab$predict)
+
+KA <- KA %>% bind_rows(data_frame(Fit = "RDA_fit",Kappa = MAd::Kappa(mtab$actual, mtab$predict)))
+```
+
+#### 4 Neural Network 神经网络
+```{r,warning=FALSE,message=FALSE}
+library(nnet)
+
+#Build the model
+NNET_fit<-nnet(f_all,data = CAR.train,
+               size = 4,decay = 0.0001,maxit = 1000,trace=F)
+
+#Predict using the model
+pred_nnet<-predict(NNET_fit,CAR.test,type="class")
+
+#Accuracy of the model
+mtab <- data_frame(actual=CAR.test$class,
+                   predict=factor(pred_nnet))
+
+confusionMatrix(mtab$actual, mtab$predict)$table
+
+# MAd::Kappa(mtab$actual, mtab$predict)
+
+KA <- KA %>% bind_rows(data_frame(Fit = "NNET_fit",Kappa = MAd::Kappa(mtab$actual, mtab$predict)))
+
+```
+
+#### 5 Flexible Discriminant Analysis 灵活划分
+
+```{r,message=FALSE,warning=FALSE}
+library(mda)
+
+#Build the model
+
+FDA_fit<-fda(f_all,data=CAR.train)
+
+#Predict using the model
+pred_fda<-predict(FDA_fit,CAR.test,type="class")
+
+#Accuracy of the model
+mtab <- data_frame(actual=CAR.test$class,
+                   predict=factor(pred_fda))
+
+confusionMatrix(mtab$actual, mtab$predict)$table
+
+# MAd::Kappa(mtab$actual, mtab$predict)
+
+KA <- KA %>% bind_rows(data_frame(Fit = "FDA_fit",Kappa = MAd::Kappa(mtab$actual, mtab$predict)))
+```
+
+#### 6 Support Vector Machine 支持向量机
+
+```{r,message=FALSE,warning=FALSE}
+library(kernlab)
+
+#Build the model
+KSVM_fit <- ksvm(f_all,data=CAR.train)
+
+#Predict using the model
+pred_svm<-predict(KSVM_fit,CAR.test,type="response")
+
+#Accuracy of the model
+mtab <- data_frame(actual=CAR.test$class,
+                   predict=factor(pred_fda))
+
+confusionMatrix(mtab$actual, mtab$predict)$table
+
+# MAd::Kappa(mtab$actual, mtab$predict)
+
+KA <- KA %>% bind_rows(data_frame(Fit = "KSVM_fit",Kappa = MAd::Kappa(mtab$actual, mtab$predict)))
+```
+
+#### 7 k-Nearest Neighbors 近邻
+
+```{r,message=FALSE,warning=FALSE}
+
+#Build the model
+KNN3_fit <- knn3(f_all,data=CAR.train,k=3)
+
+#Predict using the model
+pred_knn<-predict(KNN3_fit,CAR.test,type="class")
+
+#Accuracy of the model
+mtab <- data_frame(actual=CAR.test$class,
+                   predict=factor(pred_knn))
+
+confusionMatrix(mtab$actual, mtab$predict)$table
+
+# MAd::Kappa(mtab$actual, mtab$predict)
+
+KA <- KA %>% bind_rows(data_frame(Fit = "KNN3_fit",Kappa = MAd::Kappa(mtab$actual, mtab$predict)))
+```
+
+#### 8 Naive Bayes 贝叶斯分类
+
+```{r,message=FALSE,warning=FALSE}
+library(e1071)
+
+#Build the model
+NB_fit <-naiveBayes(f_all,data = CAR.train,k=5)
+
+#Predict using the model
+pred_naive<-predict(NB_fit,CAR.test)
+
+#Accuracy of the model
+mtab <- data_frame(actual=CAR.test$class,
+                   predict=factor(pred_knn))
+
+confusionMatrix(mtab$actual, mtab$predict)$table
+
+# MAd::Kappa(mtab$actual, mtab$predict)
+
+KA <- KA %>% bind_rows(data_frame(Fit = "NB_fit",Kappa = MAd::Kappa(mtab$actual, mtab$predict)))
+```
+
+### C Non-Linear Classification with Decision Trees 非线性分类树
+
+#### 1 Classification and Regression Trees(CART) 回归树
+
+```{r,message=FALSE,warning=FALSE}
+library(rpart)
+
+#Build the model
+CART_fit<-rpart(f_all,data = CAR.train)
+
+#Predict using the model
+pred_cart<-predict(CART_fit,CAR.test,type="class")
+
+#Accuracy of the model
+mtab <- data_frame(actual=CAR.test$class,
+                   predict=factor(pred_knn))
+
+confusionMatrix(mtab$actual, mtab$predict)$table
+
+# MAd::Kappa(mtab$actual, mtab$predict)
+
+KA <- KA %>% bind_rows(data_frame(Fit = "CART_fit",Kappa = MAd::Kappa(mtab$actual, mtab$predict)))
+```
+
+#### 2 C4.5 决策树
+
+```{r,message=FALSE,warning=FALSE}
+library(RWeka)
+
+#Build the model
+C45_fit <- J48(f_all,data = CAR.train)
+
+#Predict using the model
+pred_c45<-predict(C45_fit,CAR.test)
+
+#Accuracy of the model
+mtab <- data_frame(actual=CAR.test$class,
+                   predict=factor(pred_knn))
+
+confusionMatrix(mtab$actual, mtab$predict)$table
+
+# MAd::Kappa(mtab$actual, mtab$predict)
+
+KA <- KA %>% bind_rows(data_frame(Fit = "C45_fit",Kappa = MAd::Kappa(mtab$actual, mtab$predict)))
+```
+
+#### 3 PART 部分决策树
+
+```{r,message=FALSE,warning=FALSE}
+library(RWeka)
+
+#Build the model
+PART_fit<-PART(f_all,data = CAR.train)
+
+#Predict using the model
+pred_part<-predict(PART_fit,CAR.test)
+
+#Accuracy of the model
+mtab <- data_frame(actual=CAR.test$class,
+                   predict=factor(pred_part))
+
+confusionMatrix(mtab$actual, mtab$predict)$table
+
+# MAd::Kappa(mtab$actual, mtab$predict)
+
+KA <- KA %>% bind_rows(data_frame(Fit = "PART_fit",Kappa = MAd::Kappa(mtab$actual, mtab$predict)))
+```
+
+#### 4 Bagging CART 背包回归树
+
+```{r,message=FALSE,warning=FALSE}
+library(ipred)
+
+#Build the model
+BAG_fit <- bagging(f_all,data = CAR.train)
+
+#Predict using the model
+pred_bag <- predict(BAG_fit,CAR.test)
+
+#Accuracy of the model
+mtab <- data_frame(actual=CAR.test$class,
+                   predict=factor(pred_bag))
+
+confusionMatrix(mtab$actual, mtab$predict)$table
+
+# MAd::Kappa(mtab$actual, mtab$predict)
+
+KA <- KA %>% bind_rows(data_frame(Fit = "BAG_fit",Kappa = MAd::Kappa(mtab$actual, mtab$predict)))
+```
+
+#### 5 Random Forest 随机森林
+
+```{r,message=FALSE,warning=FALSE}
+library(randomForest)
+
+#Build the model
+RF_fit <- randomForest(f_all,data = CAR.train)
+
+#Predict using the model
+pred_rf <- predict(RF_fit,CAR.test)
+
+#Accuracy of the model
+mtab <- data_frame(actual=CAR.test$class,
+                   predict=factor(pred_rf))
+
+confusionMatrix(mtab$actual, mtab$predict)$table
+
+# MAd::Kappa(mtab$actual, mtab$predict)
+
+KA <- KA %>% bind_rows(data_frame(Fit = "RF_fit",Kappa = MAd::Kappa(mtab$actual, mtab$predict)))
+```
+
+#### 6 Gradient Boosted Machine 梯度生成树机器
+
+```{r,message=FALSE,warning=FALSE}
+library(gbm)
+
+#Build the model
+GBM_fit <- gbm(f_all,data=CAR.train,
+               distribution="multinomial",
+               # cv.folds=5,
+               shrinkage=0.1,
+               interaction.depth = 16)
+
+#Predict using the model
+probability <- predict.gbm(GBM_fit,CAR.test,
+                           n.trees = 100,
+                           type='response')
+
+pred_gbm<-colnames(probability)[apply(probability,1,which.max)]
+
+#Accuracy of the model
+mtab <- data_frame(actual=CAR.test$class,
+                   predict=factor(pred_gbm))
+
+confusionMatrix(mtab$actual, mtab$predict)$table
+
+# MAd::Kappa(mtab$actual, mtab$predict)
+
+KA <- KA %>% bind_rows(data_frame(Fit = "GBM_fit",Kappa = MAd::Kappa(mtab$actual, mtab$predict)))
+```
+
+#### 7 Boosted C5.0 生成树
+
+```{r,message=FALSE,warning=FALSE}
+library(C50)
+
+#Build the model
+C50_fit<-C5.0(f_all,data=CAR.train,
+              trials=10)
+
+#Predict using the model
+pred_c50<-predict(C50_fit,CAR.test)
+
+#Accuracy of the model
+mtab <- data_frame(actual=CAR.test$class,
+                   predict=factor(pred_c50))
+
+confusionMatrix(mtab$actual, mtab$predict)$table
+
+# MAd::Kappa(mtab$actual, mtab$predict)
+
+KA <- KA %>% bind_rows(data_frame(Fit = "C50_fit",Kappa = MAd::Kappa(mtab$actual, mtab$predict)))
+```
+
+```{r}
+arrange(KA,desc(Kappa))
+```
+
